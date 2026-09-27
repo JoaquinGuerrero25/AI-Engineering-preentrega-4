@@ -207,7 +207,8 @@ consulta ─> RAGSystem ───┤                                            
 - **Por qué híbrido**: BM25 resuelve bien los nombres exactos (`ProcessPoolExecutor`,
   `cache_info`) aunque aparezcan pocas veces. La búsqueda vectorial encuentra paráfrasis
   ("aislar las librerías de cada proyecto" → entornos virtuales) que no comparten palabras con
-  el documento.
+  el documento. La justificación completa, con evidencia, está en
+  [Por qué un recuperador híbrido](#por-qué-un-recuperador-híbrido).
 
 ## Evaluación
 
@@ -271,6 +272,89 @@ Posición del documento correcto y Precision@5 de cada modo, por pregunta:
 - La Precision@5 del híbrido (0.40) queda por debajo del techo (0.48) por la pregunta 2: el top-5
   trae 1 de los 3 chunks de `functools` y completa con otros documentos que mencionan `True` y
   `False`.
+
+## Por qué un recuperador híbrido
+
+### Dos buscadores que fallan en casos opuestos
+
+| | BM25 (léxico) | Pinecone (semántico) |
+|---|---|---|
+| **Qué compara** | Términos exactos, ponderando los poco frecuentes (IDF) | Significado (similitud coseno entre embeddings) |
+| **Acierta con** | Nombres técnicos y parámetros: `ProcessPoolExecutor`, `typed=True`, `cache_info` | Paráfrasis y síntomas: "procesos sin parar en Windows", "aislar las librerías" |
+| **Falla con** | Preguntas que no comparten palabras con el texto | Términos muy puntuales que el embedding diluye; temas cercanos que confunde |
+
+La documentación técnica tiene las dos cosas: identificadores exactos **y** preguntas escritas con
+otras palabras. Ninguno de los dos buscadores alcanza por sí solo.
+
+### Cómo se fusionan: Reciprocal Rank Fusion
+
+El `EnsembleRetriever` combina los dos rankings con RRF ponderado:
+
+```
+score(chunk) = Σ  peso_i / (posición_i + 60)
+```
+
+Ejemplo con pesos 0.5 / 0.5:
+
+| Chunk | BM25 | Pinecone | Score RRF |
+|---|---|---|---|
+| A | 1.º | 3.º | 0.5/61 + 0.5/63 = **0.0161** |
+| B | – | 1.º | 0.5/61 = **0.0082** |
+
+A queda por encima de B aunque Pinecone lo ubique más abajo, porque **los dos buscadores coinciden**
+en que es relevante. Ese acuerdo entre dos señales independientes es lo que el método premia.
+
+### Decisiones de diseño
+
+| Decisión | Motivo |
+|---|---|
+| **RRF en vez de sumar scores** | BM25 devuelve puntajes sin tope (por ejemplo, 12.4) y el coseno está entre 0 y 1. Sumarlos exigiría normalizar escalas incomparables. RRF usa solo las posiciones. |
+| **Pesos 0.5 / 0.5** | Es el punto de partida neutral y se configura en `.env` (`BM25_WEIGHT`, `VECTOR_WEIGHT`). Ajustarlos con 5 preguntas sería sobreajustar al benchmark. Con un golden set más grande se buscarían los pesos que maximicen MRR o nDCG. |
+| **10 candidatos por recuperador para devolver 5** | Si cada uno trajera solo 5, un chunk que queda 6.º en ambas listas se perdería, aunque la fusión lo pondría arriba. |
+| **Deduplicación por `chunk_id`** | Permite sumar el puntaje de un mismo chunk en ambas listas sin comparar textos completos. |
+| **El corpus de BM25 sale de Pinecone** | Hay una sola fuente de verdad: los dos recuperadores ven exactamente los mismos chunks, sin otra base de datos. |
+
+### Evidencia
+
+El [golden set](#evaluación) tiene preguntas pensadas para que cada buscador falle en algún caso:
+
+| Modo | Precision@5 | MRR |
+|---|---|---|
+| BM25 | 0.32 ❌ | 1.00 |
+| Pinecone | 0.40 | 0.77 ❌ |
+| **Híbrido** | **0.40** | **1.00** |
+
+- **Donde falla Pinecone:** en *"¿Qué diferencia hay entre typed=True y typed=False?"*, el
+  embedding ubica `functools` 3.º, detrás de dos chunks de `dataclasses`. BM25 encuentra el término
+  poco frecuente `typed` y el híbrido lo sube al 1.º.
+- **Donde falla BM25:** en *"Mi script se queda creando procesos sin parar en Windows"*, BM25
+  recupera solo 1 de los 3 chunks de `concurrent-futures` porque la pregunta no comparte palabras
+  con el texto. Pinecone entiende la paráfrasis y el híbrido conserva sus 3 chunks.
+
+El híbrido es el único modo que no pierde en ninguna métrica: tiene el MRR de BM25 y la
+Precision@5 de Pinecone.
+
+Para reproducir el caso de `typed` en los tres modos:
+
+```bash
+python rag_system.py "¿Qué diferencia hay entre typed=True y typed=False?" --modo vectorial
+python rag_system.py "¿Qué diferencia hay entre typed=True y typed=False?" --modo bm25
+python rag_system.py "¿Qué diferencia hay entre typed=True y typed=False?"
+```
+
+### Alternativas y límites
+
+- **Búsqueda híbrida nativa de Pinecone (sparse-dense).** Es una alternativa válida, pero
+  requiere un índice con métrica `dotproduct` y generar vectores sparse durante la ingesta. Se
+  eligió `BM25Retriever` + `EnsembleRetriever` porque es lo que pide la consigna y porque permite
+  evaluar cada recuperador por separado.
+- **Escalabilidad de BM25 en memoria.** Con miles de chunks funciona sin problemas. Con millones,
+  cargar el corpus completo al iniciar sería lento; en ese caso convendría la búsqueda sparse de
+  Pinecone o un motor como Elasticsearch. Como `RAGSystem` combina retrievers intercambiables,
+  basta con reemplazar el recuperador léxico sin tocar el resto.
+- **Recall@5 = 1.00 en todos los modos.** Con 26 chunks, el documento correcto siempre entra en el
+  top-5. Por eso las diferencias se ven en MRR (en qué posición aparece) y en Precision@5 (cuánto
+  ruido lo acompaña).
 
 ## Errores comunes y cómo se evitan
 
