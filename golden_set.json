@@ -1,0 +1,27 @@
+[
+  {
+    "pregunta": "¿Qué pasa cuando se llena la caché de lru_cache y cómo veo cuántos aciertos tuvo?",
+    "documento_id_esperado": "functools",
+    "tipo": "léxica: identificadores técnicos (lru_cache, cache_info)"
+  },
+  {
+    "pregunta": "¿Cómo hago para que varias funciones async corran a la vez y esperar a que terminen todas?",
+    "documento_id_esperado": "asyncio",
+    "tipo": "semántica: paráfrasis sin nombrar gather ni TaskGroup"
+  },
+  {
+    "pregunta": "¿Cuándo conviene ProcessPoolExecutor en lugar de ThreadPoolExecutor?",
+    "documento_id_esperado": "concurrent-futures",
+    "tipo": "léxica: nombres propios de clases"
+  },
+  {
+    "pregunta": "¿Por qué es peligroso capturar todas las excepciones con un except vacío?",
+    "documento_id_esperado": "faq-except-generico",
+    "tipo": "mixta: documento JSON corto (1 chunk)"
+  },
+  {
+    "pregunta": "¿Cómo aíslo las librerías de cada proyecto para que no choquen entre sí?",
+    "documento_id_esperado": "guia-entornos-virtuales",
+    "tipo": "semántica: documento PDF, la pregunta no menciona venv ni pip"
+  }
+]

@@ -1,0 +1,14 @@
+# Credenciales
+.env
+
+# Entorno virtual
+.venv/
+venv/
+
+# Resultados locales de evaluate.py --guardar
+resultados/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/

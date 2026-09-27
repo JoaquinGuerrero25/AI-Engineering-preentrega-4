@@ -1,0 +1,40 @@
+{
+  "coleccion": "Preguntas frecuentes: errores comunes y buenas prácticas en Python",
+  "documents": [
+    {
+      "id": "faq-except-generico",
+      "title": "¿Por qué no usar except: sin especificar la excepción?",
+      "category": "buenas-practicas",
+      "tags": ["excepciones", "try", "except", "errores"],
+      "content": "Un bloque `except:` sin tipo (o `except BaseException:`) captura absolutamente todo, incluidas excepciones que no son errores del programa, como `KeyboardInterrupt` (cuando el usuario presiona Ctrl+C) y `SystemExit` (lanzada por `sys.exit()`). El resultado es un programa que no se puede detener y que oculta bugs: un simple error de tipeo en un nombre de variable (`NameError`) queda silenciado y el problema aparece mucho después, lejos de su causa.\n\nLa recomendación es capturar sólo las excepciones que se esperan y se saben manejar, lo más específicas posible:\n\n```python\ntry:\n    valor = int(texto)\nexcept ValueError:\n    valor = 0\n```\n\nSi realmente hace falta un manejador general (por ejemplo, en el bucle principal de un servidor para que una petición fallida no tumbe todo el proceso), usar `except Exception as e:`, que deja pasar `KeyboardInterrupt` y `SystemExit`, y registrar el error con `logger.exception()` para conservar el traceback. Nunca usar `pass` en un `except` sin al menos dejar constancia del error. Para relanzar una excepción conservando la original se usa `raise NuevaExcepcion(...) from e`."
+    },
+    {
+      "id": "faq-argumento-mutable",
+      "title": "Argumentos por defecto mutables en funciones",
+      "category": "buenas-practicas",
+      "tags": ["funciones", "argumentos", "listas", "errores-comunes"],
+      "content": "Los valores por defecto de los parámetros de una función se evalúan una sola vez, cuando se ejecuta la sentencia `def`, no en cada llamada. Por eso usar una lista o un diccionario como valor por defecto produce un comportamiento sorprendente: todas las llamadas comparten el mismo objeto.\n\n```python\ndef agregar(item, lista=[]):\n    lista.append(item)\n    return lista\n\nagregar(1)   # [1]\nagregar(2)   # [1, 2]  <- la lista 'recuerda' la llamada anterior\n```\n\nLa solución idiomática es usar `None` como centinela y crear el objeto dentro de la función:\n\n```python\ndef agregar(item, lista=None):\n    if lista is None:\n        lista = []\n    lista.append(item)\n    return lista\n```\n\nEn las dataclasses el mismo problema se resuelve con `field(default_factory=list)`, y el propio decorador impide usar una lista como valor por defecto directo. Los linters como Ruff o Pylint detectan este patrón (regla B006 / dangerous-default-value)."
+    },
+    {
+      "id": "faq-is-vs-igual",
+      "title": "Diferencia entre is y ==",
+      "category": "buenas-practicas",
+      "tags": ["operadores", "identidad", "igualdad", "none"],
+      "content": "El operador `==` compara **igualdad de valor**: llama al método `__eq__` y responde si dos objetos son equivalentes. El operador `is` compara **identidad**: responde si dos nombres apuntan exactamente al mismo objeto en memoria (el mismo `id()`).\n\n```python\na = [1, 2, 3]\nb = [1, 2, 3]\na == b   # True: mismo contenido\na is b   # False: son dos listas distintas\n```\n\nRegla práctica: usar `is` sólo para comparar con singletons, principalmente `None` (`if valor is None:`), y también `True`/`False` o centinelas propios creados con `object()`. Para números, cadenas y cualquier otro valor usar `==`. Que `x is 5` a veces devuelva `True` es un detalle de implementación de CPython (cachea enteros pequeños e interna algunas cadenas) y no debe usarse: desde Python 3.8 incluso genera un `SyntaxWarning` al comparar con un literal usando `is`."
+    },
+    {
+      "id": "faq-encoding-archivos",
+      "title": "UnicodeDecodeError al abrir archivos: especificar encoding",
+      "category": "buenas-practicas",
+      "tags": ["archivos", "encoding", "utf-8", "unicode", "windows"],
+      "content": "Cuando se llama a `open(ruta)` sin el parámetro `encoding`, Python usa la codificación preferida del sistema operativo. En Linux y macOS suele ser UTF-8, pero en Windows habitualmente es cp1252. Un archivo UTF-8 con tildes o eñes leído en Windows sin especificar la codificación puede producir `UnicodeDecodeError` o caracteres extraños como `Ã±` en lugar de `ñ`.\n\nLa buena práctica es indicar siempre la codificación de forma explícita:\n\n```python\nwith open(\"datos.csv\", encoding=\"utf-8\") as f:\n    contenido = f.read()\n```\n\nLo mismo aplica a `Path.read_text(encoding=\"utf-8\")` y `Path.write_text(..., encoding=\"utf-8\")`. Para archivos generados por Excel que incluyen BOM se puede usar `encoding=\"utf-8-sig\"`. Si se desconoce la codificación de un archivo, `errors=\"replace\"` evita la excepción a costa de reemplazar los caracteres inválidos. Activar el modo UTF-8 de Python (`PYTHONUTF8=1` o `python -X utf8`) hace que UTF-8 sea el valor por defecto en todas las plataformas; PEP 686 lo activa por defecto a partir de Python 3.15."
+    },
+    {
+      "id": "faq-fstrings",
+      "title": "f-strings: formato de cadenas y depuración",
+      "category": "buenas-practicas",
+      "tags": ["strings", "f-strings", "formato", "depuracion"],
+      "content": "Las f-strings (Python 3.6+) interpolan expresiones dentro de una cadena precedida por `f`: `f\"Hola, {nombre}\"`. Son más legibles y rápidas que `%` o `str.format()`.\n\nEspecificadores de formato útiles después de los dos puntos:\n\n- `f\"{precio:.2f}\"` → dos decimales.\n- `f\"{total:,}\"` → separador de miles (`1,234,567`).\n- `f\"{0.256:.1%}\"` → porcentaje (`25.6%`).\n- `f\"{nombre:>10}\"` / `:<10` / `:^10` → alinear a derecha, izquierda o centro en 10 caracteres.\n- `f\"{fecha:%d/%m/%Y}\"` → formato de fechas.\n\nPara depurar, el especificador `=` (Python 3.8+) muestra la expresión y su valor: `f\"{usuario=}\"` produce `usuario='ana'`. Con `!r` se usa `repr()` en lugar de `str()`. En los mensajes de `logging`, en cambio, conviene el formato diferido con `%s` para no construir cadenas que quizás no se emitan."
+    }
+  ]
+}
