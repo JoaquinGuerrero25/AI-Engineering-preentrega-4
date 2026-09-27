@@ -211,17 +211,18 @@ consulta ─> RAGSystem ───┤                                            
 
 ## Evaluación
 
-`golden_set.json` define 5 preguntas con su documento fuente conocido. A propósito, combina
-preguntas **léxicas** (identificadores exactos) y **semánticas** (paráfrasis sin palabras clave),
-y cubre los tres formatos (MD, JSON y PDF).
+`golden_set.json` define 5 preguntas con su documento fuente conocido. Las preguntas se eligieron
+para ser **difíciles** y exigir a cada recuperador por separado. Algunas describen un síntoma
+sin nombrar la API, otras mencionan solo un parámetro puntual, y varias tienen un **documento
+distractor** que habla de un tema parecido. Cubren los tres formatos (MD, JSON y PDF).
 
-| # | Pregunta | Documento esperado | Tipo |
+| # | Pregunta | Documento esperado | Qué la hace difícil |
 |---|---|---|---|
-| 1 | ¿Qué pasa cuando se llena la caché de lru_cache y cómo veo cuántos aciertos tuvo? | `functools` | léxica |
-| 2 | ¿Cómo hago para que varias funciones async corran a la vez y esperar a que terminen todas? | `asyncio` | semántica |
-| 3 | ¿Cuándo conviene ProcessPoolExecutor en lugar de ThreadPoolExecutor? | `concurrent-futures` | léxica |
-| 4 | ¿Por qué es peligroso capturar todas las excepciones con un except vacío? | `faq-except-generico` (JSON) | mixta |
-| 5 | ¿Cómo aíslo las librerías de cada proyecto para que no choquen entre sí? | `guia-entornos-virtuales` (PDF) | semántica |
+| 1 | ¿Cómo evito que todas las instancias de mi clase de datos compartan la misma lista? | `dataclasses` | Distractor: el FAQ de argumentos mutables en funciones trata el mismo problema |
+| 2 | ¿Qué diferencia hay entre typed=True y typed=False? | `functools` | Solo nombra un parámetro, sin mencionar `lru_cache` ni el módulo |
+| 3 | Mi script que usa todos los núcleos se queda creando procesos sin parar en Windows, ¿por qué pasa? | `concurrent-futures` | Describe el síntoma, no menciona `ProcessPoolExecutor` ni `__main__` |
+| 4 | Leo un CSV en Windows y las eñes aparecen como símbolos raros, ¿cómo lo soluciono? | `faq-encoding-archivos` (JSON) | Distractor: `pathlib` también habla de `encoding` y `cp1252` |
+| 5 | ¿Cómo aíslo las librerías de cada proyecto para que no choquen entre sí? | `guia-entornos-virtuales` (PDF) | Paráfrasis: no menciona `venv` ni `pip` |
 
 **Métricas** (por pregunta, luego promediadas):
 
@@ -239,32 +240,37 @@ Salida de `python evaluate.py` contra el índice real (Pinecone Serverless aws/u
 
 | Modo | Recall@5 | Precision@5 | P@5 máx. | MRR |
 |---|---|---|---|---|
-| BM25 (léxico) | 1.00 | 0.52 | 0.52 | 1.00 |
-| Pinecone (semántico) | 1.00 | 0.52 | 0.52 | 1.00 |
-| **Híbrido (Ensemble)** | **1.00** | **0.52** | 0.52 | **1.00** |
+| BM25 (léxico) | 1.00 | 0.32 | 0.48 | **1.00** |
+| Pinecone (semántico) | 1.00 | **0.40** | 0.48 | 0.77 |
+| **Híbrido (Ensemble)** | **1.00** | **0.40** | 0.48 | **1.00** |
 
-Detalle del modo híbrido:
+Posición del documento correcto y Precision@5 de cada modo, por pregunta:
 
-| # | Documento esperado | Recall@5 | Precision@5 (máx.) | Top-5 recuperado |
+| # | Documento esperado | BM25 | Pinecone | Híbrido |
 |---|---|---|---|---|
-| 1 | `functools` | 1 | 0.60 (0.60) | functools ×3, itertools, dataclasses |
-| 2 | `asyncio` | 1 | 0.60 (0.60) | asyncio ×3, functools ×2 |
-| 3 | `concurrent-futures` | 1 | 0.60 (0.60) | concurrent-futures ×3, asyncio, faq-fstrings |
-| 4 | `faq-except-generico` | 1 | 0.20 (0.20) | faq-except-generico, logging, faq-encoding-archivos, faq-argumento-mutable, asyncio |
-| 5 | `guia-entornos-virtuales` | 1 | 0.60 (0.60) | guia-entornos-virtuales ×3, logging, concurrent-futures |
+| 1 | `dataclasses` | 1.º · P=0.40 | **2.º** (1.º el FAQ distractor) · P=0.40 | 1.º · P=0.40 |
+| 2 | `functools` | 1.º · P=0.20 | **3.º** (detrás de 2 chunks de dataclasses) · P=0.20 | 1.º · P=0.20 |
+| 3 | `concurrent-futures` | 1.º · **P=0.20** | 1.º · P=0.60 | 1.º · P=0.60 |
+| 4 | `faq-encoding-archivos` | 1.º · P=0.20 | 1.º · P=0.20 | 1.º · P=0.20 |
+| 5 | `guia-entornos-virtuales` | 1.º · P=0.60 | 1.º · P=0.60 | 1.º · P=0.60 |
 
 **Interpretación**
 
-- **Recall@5 = 1.00**: en las 5 preguntas el documento correcto aparece entre los 5 recuperados,
-  y además siempre en la **primera posición** (MRR = 1.00).
-- **Precision@5 = 0.52**, que es exactamente el **techo alcanzable**: en cada pregunta el top-5
-  trae *todos* los chunks del documento correcto y recién después completa con otros. Por ejemplo,
-  el FAQ del `except` tiene un único chunk, así que 0.20 es la precisión perfecta para esa pregunta.
-- Con este corpus chico (26 chunks) y un golden set de 5 preguntas, los tres modos llegan al
-  techo y el benchmark no alcanza para diferenciarlos. El valor del híbrido aparece con más
-  documentos parecidos entre sí: BM25 cubre los nombres exactos que el embedding diluye y el
-  vector cubre las paráfrasis que BM25 no ve. Para medir esa diferencia habría que ampliar el
-  golden set con preguntas más difíciles.
+- **Recall@5 = 1.00 en los tres modos**: el corpus es chico (26 chunks), así que el documento
+  correcto siempre entra en el top-5. La diferencia está en *dónde* aparece y en *cuánto ruido*
+  lo acompaña.
+- **Pinecone falla en el orden (MRR 0.77)**. En la pregunta 1, el embedding confunde dos temas
+  cercanos y pone primero el FAQ de argumentos mutables. En la 2, `typed=True` es un término
+  demasiado puntual y el embedding lo diluye. BM25 encuentra ese término exacto y los pone primero.
+- **BM25 falla en la precisión (0.32)**. En la pregunta 3 ("procesos sin parar en Windows") solo
+  recupera 1 de los 3 chunks de `concurrent-futures`, porque la pregunta no comparte palabras con
+  el texto. El embedding sí entiende la paráfrasis.
+- **El híbrido se queda con lo mejor de cada uno**: tiene el **MRR de BM25 (1.00)** y la
+  **Precision@5 de Pinecone (0.40)**. Es el único modo que no pierde en ninguna métrica, que es
+  justamente lo que justifica usar el `EnsembleRetriever`.
+- La Precision@5 del híbrido (0.40) queda por debajo del techo (0.48) por la pregunta 2: el top-5
+  trae 1 de los 3 chunks de `functools` y completa con otros documentos que mencionan `True` y
+  `False`.
 
 ## Errores comunes y cómo se evitan
 
